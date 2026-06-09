@@ -256,16 +256,6 @@ const safeGuidance = getSafeGuidance(lowerText);
     lowerText.includes("virus")
   ) {
     return [
-      "**Possible security issue detected.**",
-      "",
-      "Do not click anything else, do not delete evidence, and do not forward suspicious content unless IT asks.",
-      "",
-      "Type **/ticket** now and include what happened, when it happened, and any suspicious sender, link, file, or message.",
-    ].join("\n");
-  }
-
-  return undefined;
-};
 
 const helpMessage = (): string => {
   return [
