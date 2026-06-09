@@ -36,15 +36,11 @@ const createTokenFactory = () => {
   };
 };
 
-// Configure authentication using client secret credentials.
-// This is required for Railway or any non-Azure-hosted environment.
-// Managed Identity only works when hosted inside Azure with managed identity enabled.
 const tokenCredentials: TokenCredentials = {
   clientId: process.env.CLIENT_ID || process.env.BOT_ID || "",
   token: createTokenFactory(),
 };
 
-// Always pass credentials. Railway does not have Azure Managed Identity.
 const app = new App({
   ...tokenCredentials,
   storage,
@@ -140,26 +136,14 @@ const rebootGuidance = (): string => {
   ].join("\n");
 };
 
-const safeGuidance = getSafeGuidance(lowerText);
-
-	if (safeGuidance) {
-	await context.send(safeGuidance);
-	return;
-	}
-
-	const aiResponse = await analyzeSupportMessage(text);
-
-	await context.send(
-		[
-			aiResponse.reply,
-			"",
-			aiResponse.shouldCreateTicket
-				? "I can create a support ticket for this. Type **/ticket** to start."
-				: "Type **/ticket** if you want IT to review this.",
-			].join("\n")
-		);
-
-	return;
+const getSafeGuidance = (lowerText: string): string | undefined => {
+  if (
+    lowerText.includes("reboot") ||
+    lowerText.includes("restart computer") ||
+    lowerText.includes("restart my computer")
+  ) {
+    return rebootGuidance();
+  }
 
   if (lowerText.includes("outlook")) {
     return [
@@ -256,6 +240,16 @@ const safeGuidance = getSafeGuidance(lowerText);
     lowerText.includes("virus")
   ) {
     return [
+      "**Possible security issue detected.**",
+      "",
+      "Do not click anything else, do not delete evidence, and do not forward suspicious content unless IT asks.",
+      "",
+      "Type **/ticket** now and include what happened, when it happened, and any suspicious sender, link, file, or message.",
+    ].join("\n");
+  }
+
+  return undefined;
+};
 
 const helpMessage = (): string => {
   return [
@@ -354,6 +348,12 @@ app.on("message", async (context) => {
   const text: string = stripMentionsText(activity).trim();
   const lowerText = text.toLowerCase();
 
+  console.log("Received Teams message:", {
+    conversationId,
+    conversationType: activity.conversation.conversationType,
+    text,
+  });
+
   if (!text) {
     await context.send(
       "ReBath IT Helper is online. Type **/ticket** to start a new IT support ticket, or type **/help** for commands."
@@ -421,6 +421,7 @@ app.on("message", async (context) => {
       hasClientId: Boolean(process.env.CLIENT_ID),
       hasClientSecret: Boolean(process.env.CLIENT_SECRET),
       hasTenantId: Boolean(process.env.TENANT_ID),
+      hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
     };
 
     await context.send(JSON.stringify(runtime, null, 2));
@@ -591,21 +592,41 @@ app.on("message", async (context) => {
     return;
   }
 
-  state.count++;
-  state.mode = "idle";
+  try {
+    const aiResponse = await analyzeSupportMessage(text);
 
-  saveConversationState(conversationId, state);
+    await context.send(
+      [
+        aiResponse.reply,
+        "",
+        aiResponse.shouldCreateTicket
+          ? "I can create a support ticket for this. Type **/ticket** to start."
+          : "Type **/ticket** if you want IT to review this.",
+      ].join("\n")
+    );
 
-  await context.send(
-    [
-      "ReBath IT Helper is online.",
-      "",
-      "I can help with basic IT questions or collect details for a support ticket.",
-      "",
-      "Type **/ticket** to start a new IT support ticket.",
-      "Type **/help** to see available commands.",
-    ].join("\n")
-  );
+    return;
+  } catch (error) {
+    console.error("AI response failed:", error);
+
+    state.count++;
+    state.mode = "idle";
+
+    saveConversationState(conversationId, state);
+
+    await context.send(
+      [
+        "ReBath IT Helper is online.",
+        "",
+        "I can help with basic IT questions or collect details for a support ticket.",
+        "",
+        "Type **/ticket** to start a new IT support ticket.",
+        "Type **/help** to see available commands.",
+      ].join("\n")
+    );
+
+    return;
+  }
 });
 
 export default app;
