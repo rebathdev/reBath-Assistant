@@ -31,6 +31,41 @@ const fallbackResponse = (message: string): AiSupportResponse => {
   };
 };
 
+const normalizeAiResponse = (value: Partial<AiSupportResponse>, originalMessage: string): AiSupportResponse => {
+  return {
+    reply:
+      typeof value.reply === "string" && value.reply.trim()
+        ? value.reply
+        : fallbackResponse(originalMessage).reply,
+    category:
+      typeof value.category === "string" && value.category.trim()
+        ? value.category
+        : "Inquiry",
+    subcategory:
+      typeof value.subcategory === "string" && value.subcategory.trim()
+        ? value.subcategory
+        : "General",
+    impact: value.impact === "1" || value.impact === "2" || value.impact === "3" ? value.impact : "3",
+    urgency: value.urgency === "1" || value.urgency === "2" || value.urgency === "3" ? value.urgency : "3",
+    shouldCreateTicket:
+      typeof value.shouldCreateTicket === "boolean"
+        ? value.shouldCreateTicket
+        : true,
+    securitySensitive:
+      typeof value.securitySensitive === "boolean"
+        ? value.securitySensitive
+        : false,
+    shortDescription:
+      typeof value.shortDescription === "string" && value.shortDescription.trim()
+        ? value.shortDescription
+        : "General IT support request",
+    serviceNowDescription:
+      typeof value.serviceNowDescription === "string" && value.serviceNowDescription.trim()
+        ? value.serviceNowDescription
+        : originalMessage,
+  };
+};
+
 export const analyzeSupportMessage = async (
   userMessage: string
 ): Promise<AiSupportResponse> => {
@@ -39,9 +74,10 @@ export const analyzeSupportMessage = async (
   }
 
   try {
-    const response = await client.responses.create({
-      model: "gpt-5.1-mini",
-      input: [
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
         {
           role: "system",
           content: [
@@ -51,7 +87,18 @@ export const analyzeSupportMessage = async (
             "Never provide admin commands, scripts, PowerShell, registry edits, security bypasses, access changes, password reset bypasses, deletion steps, or advanced troubleshooting.",
             "If the issue sounds security-related, urgent, multi-user, store-impacting, account-compromise-related, data-loss-related, or business-blocking, recommend creating a ticket.",
             "Keep reply concise, professional, and helpful.",
-            "Return only valid JSON matching the schema.",
+            "Return only valid JSON with this exact shape:",
+            JSON.stringify({
+              reply: "string",
+              category: "string",
+              subcategory: "string",
+              impact: "1 | 2 | 3",
+              urgency: "1 | 2 | 3",
+              shouldCreateTicket: true,
+              securitySensitive: false,
+              shortDescription: "string",
+              serviceNowDescription: "string",
+            }),
           ].join("\n"),
         },
         {
@@ -59,54 +106,17 @@ export const analyzeSupportMessage = async (
           content: userMessage,
         },
       ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "support_response",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              reply: { type: "string" },
-              category: { type: "string" },
-              subcategory: { type: "string" },
-              impact: {
-                type: "string",
-                enum: ["1", "2", "3"],
-              },
-              urgency: {
-                type: "string",
-                enum: ["1", "2", "3"],
-              },
-              shouldCreateTicket: { type: "boolean" },
-              securitySensitive: { type: "boolean" },
-              shortDescription: { type: "string" },
-              serviceNowDescription: { type: "string" },
-            },
-            required: [
-              "reply",
-              "category",
-              "subcategory",
-              "impact",
-              "urgency",
-              "shouldCreateTicket",
-              "securitySensitive",
-              "shortDescription",
-              "serviceNowDescription",
-            ],
-          },
-        },
-      },
+      temperature: 0.2,
     });
 
-    const outputText = response.output_text;
+    const content = completion.choices[0]?.message?.content;
 
-    if (!outputText) {
+    if (!content) {
       return fallbackResponse(userMessage);
     }
 
-    return JSON.parse(outputText) as AiSupportResponse;
+    const parsed = JSON.parse(content) as Partial<AiSupportResponse>;
+    return normalizeAiResponse(parsed, userMessage);
   } catch (error) {
     console.error("AI support analysis failed:", error);
     return fallbackResponse(userMessage);
