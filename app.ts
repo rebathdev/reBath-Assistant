@@ -1,40 +1,51 @@
 import { stripMentionsText, TokenCredentials } from "@microsoft/teams.api";
 import { App } from "@microsoft/teams.apps";
 import { LocalStorage } from "@microsoft/teams.common";
-import config from "./config";
-import { ManagedIdentityCredential } from "@azure/identity";
+import { ClientSecretCredential } from "@azure/identity";
 
 // Create storage for conversation history
 const storage = new LocalStorage();
 
 const createTokenFactory = () => {
   return async (scope: string | string[], tenantId?: string): Promise<string> => {
-    const managedIdentityCredential = new ManagedIdentityCredential({
-      clientId: process.env.CLIENT_ID,
-    });
+    const clientId = process.env.CLIENT_ID || process.env.BOT_ID || "";
+    const clientSecret = process.env.CLIENT_SECRET || "";
+    const resolvedTenantId = tenantId || process.env.TENANT_ID || "";
+
+    if (!clientId || !clientSecret || !resolvedTenantId) {
+      throw new Error(
+        "Missing required bot auth environment variables. Required: CLIENT_ID or BOT_ID, CLIENT_SECRET, and TENANT_ID."
+      );
+    }
+
+    const credential = new ClientSecretCredential(
+      resolvedTenantId,
+      clientId,
+      clientSecret
+    );
 
     const scopes = Array.isArray(scope) ? scope : [scope];
+    const tokenResponse = await credential.getToken(scopes);
 
-    const tokenResponse = await managedIdentityCredential.getToken(scopes, {
-      tenantId: tenantId,
-    });
+    if (!tokenResponse?.token) {
+      throw new Error("Failed to acquire token for Teams bot authentication.");
+    }
 
     return tokenResponse.token;
   };
 };
 
-// Configure authentication using TokenCredentials
+// Configure authentication using client secret credentials.
+// This is required for Railway or any non-Azure-hosted environment.
+// Managed Identity only works when hosted inside Azure with managed identity enabled.
 const tokenCredentials: TokenCredentials = {
-  clientId: process.env.CLIENT_ID || "",
+  clientId: process.env.CLIENT_ID || process.env.BOT_ID || "",
   token: createTokenFactory(),
 };
 
-const credentialOptions =
-  config.MicrosoftAppType === "UserAssignedMsi" ? { ...tokenCredentials } : undefined;
-
-// Create the app with storage
+// Always pass credentials. Railway does not have Azure Managed Identity.
 const app = new App({
-  ...credentialOptions,
+  ...tokenCredentials,
   storage,
 });
 
@@ -101,11 +112,31 @@ const isTicketStartRequest = (lowerText: string): boolean => {
 };
 
 const isCancelRequest = (lowerText: string): boolean => {
-  return ["/cancel", "cancel", "stop", "nevermind", "never mind"].includes(lowerText);
+  return ["/cancel", "cancel", "stop", "nevermind", "never mind"].includes(
+    lowerText
+  );
 };
 
 const isConfirmRequest = (lowerText: string): boolean => {
-  return ["confirm", "submit", "yes", "y", "create", "create ticket"].includes(lowerText);
+  return ["confirm", "submit", "yes", "y", "create", "create ticket"].includes(
+    lowerText
+  );
+};
+
+const rebootGuidance = (): string => {
+  return [
+    "**Safe reboot guidance:**",
+    "",
+    "A reboot can clear common app, VPN, printer, and Windows session issues.",
+    "",
+    "Before rebooting:",
+    "1. Save your work.",
+    "2. Close open apps.",
+    "3. Restart from the Windows Start menu.",
+    "4. Sign back in and test the issue again.",
+    "",
+    "If the issue continues, type **/ticket** and I’ll collect the details for IT.",
+  ].join("\n");
 };
 
 const getSafeGuidance = (lowerText: string): string | undefined => {
@@ -171,7 +202,12 @@ const getSafeGuidance = (lowerText: string): string | undefined => {
     ].join("\n");
   }
 
-  if (lowerText.includes("internet") || lowerText.includes("network") || lowerText.includes("wifi")) {
+  if (
+    lowerText.includes("internet") ||
+    lowerText.includes("network") ||
+    lowerText.includes("wifi") ||
+    lowerText.includes("wi-fi")
+  ) {
     return [
       "**Basic network check:**",
       "",
@@ -184,7 +220,11 @@ const getSafeGuidance = (lowerText: string): string | undefined => {
     ].join("\n");
   }
 
-  if (lowerText.includes("password") || lowerText.includes("mfa") || lowerText.includes("authenticator")) {
+  if (
+    lowerText.includes("password") ||
+    lowerText.includes("mfa") ||
+    lowerText.includes("authenticator")
+  ) {
     return [
       "**Account access issue:**",
       "",
@@ -212,22 +252,6 @@ const getSafeGuidance = (lowerText: string): string | undefined => {
   }
 
   return undefined;
-};
-
-const rebootGuidance = (): string => {
-  return [
-    "**Safe reboot guidance:**",
-    "",
-    "A reboot can clear common app, VPN, printer, and Windows session issues.",
-    "",
-    "Before rebooting:",
-    "1. Save your work.",
-    "2. Close open apps.",
-    "3. Restart from the Windows Start menu.",
-    "4. Sign back in and test the issue again.",
-    "",
-    "If the issue continues, type **/ticket** and I’ll collect the details for IT.",
-  ].join("\n");
 };
 
 const helpMessage = (): string => {
@@ -390,6 +414,10 @@ app.on("message", async (context) => {
       nodeversion: process.version,
       sdkversion: "2.0.0",
       conversationType: activity.conversation.conversationType,
+      hasBotId: Boolean(process.env.BOT_ID),
+      hasClientId: Boolean(process.env.CLIENT_ID),
+      hasClientSecret: Boolean(process.env.CLIENT_SECRET),
+      hasTenantId: Boolean(process.env.TENANT_ID),
     };
 
     await context.send(JSON.stringify(runtime, null, 2));
@@ -578,4 +606,3 @@ app.on("message", async (context) => {
 });
 
 export default app;
-
