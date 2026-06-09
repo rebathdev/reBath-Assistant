@@ -2,6 +2,7 @@ import { stripMentionsText, TokenCredentials } from "@microsoft/teams.api";
 import { App } from "@microsoft/teams.apps";
 import { LocalStorage } from "@microsoft/teams.common";
 import { ClientSecretCredential } from "@azure/identity";
+import { analyzeSupportMessage } from "./aiHelper";
 
 // Create storage for conversation history
 const storage = new LocalStorage();
@@ -139,14 +140,26 @@ const rebootGuidance = (): string => {
   ].join("\n");
 };
 
-const getSafeGuidance = (lowerText: string): string | undefined => {
-  if (
-    lowerText.includes("reboot") ||
-    lowerText.includes("restart computer") ||
-    lowerText.includes("restart my computer")
-  ) {
-    return rebootGuidance();
-  }
+const safeGuidance = getSafeGuidance(lowerText);
+
+	if (safeGuidance) {
+	await context.send(safeGuidance);
+	return;
+	}
+
+	const aiResponse = await analyzeSupportMessage(text);
+
+	await context.send(
+		[
+			aiResponse.reply,
+			"",
+			aiResponse.shouldCreateTicket
+				? "I can create a support ticket for this. Type **/ticket** to start."
+				: "Type **/ticket** if you want IT to review this.",
+			].join("\n")
+		);
+
+	return;
 
   if (lowerText.includes("outlook")) {
     return [
