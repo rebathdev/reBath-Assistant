@@ -103,6 +103,30 @@ const getTeamsUserInfo = (activity: any) => {
   };
 };
 
+const isGreeting = (lowerText: string): boolean => {
+  return [
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "good morning",
+    "good afternoon",
+    "good evening",
+  ].includes(lowerText);
+};
+
+const isGeneralHelpRequest = (lowerText: string): boolean => {
+  return [
+    "help",
+    "need help",
+    "i need help",
+    "can you help",
+    "can you help me",
+    "support",
+    "it help",
+  ].includes(lowerText);
+};
+
 const isTicketStartRequest = (lowerText: string): boolean => {
   return [
     "/ticket",
@@ -113,9 +137,6 @@ const isTicketStartRequest = (lowerText: string): boolean => {
     "start ticket",
     "submit ticket",
     "support ticket",
-    "i need help",
-    "need help",
-    "support",
   ].includes(lowerText);
 };
 
@@ -198,6 +219,17 @@ const detectAffectedSystem = (lowerText: string): string => {
   }
 
   if (
+    lowerText.includes("website") ||
+    lowerText.includes("browser") ||
+    lowerText.includes("chrome") ||
+    lowerText.includes("edge") ||
+    lowerText.includes("page") ||
+    lowerText.includes("site")
+  ) {
+    return "Browser / Website";
+  }
+
+  if (
     lowerText.includes("computer") ||
     lowerText.includes("laptop") ||
     lowerText.includes("pc") ||
@@ -237,6 +269,13 @@ const looksLikeIssue = (lowerText: string): boolean => {
     "keeps closing",
     "keeps freezing",
     "keeps crashing",
+    "not loading",
+    "page not loading",
+    "website not loading",
+    "site not loading",
+    "blank page",
+    "cache",
+    "cookies",
   ];
 
   return issueWords.some((word) => lowerText.includes(word));
@@ -255,6 +294,22 @@ const rebootGuidance = (): string => {
     "4. Sign back in and test the issue again.",
     "",
     "If the issue continues, reply **still not working** and I’ll help open a ticket for IT.",
+  ].join("\n");
+};
+
+const generalHelpMessage = (): string => {
+  return [
+    "Hi — I can help with basic IT issues first, then open a ticket for IT if it still does not work.",
+    "",
+    "Tell me what is happening, for example:",
+    "",
+    "- **Outlook is frozen**",
+    "- **Teams will not open**",
+    "- **VPN will not connect**",
+    "- **A website is not loading**",
+    "- **My computer is slow**",
+    "",
+    "I’ll suggest safe first steps like restarting the app, rebooting, clearing cache/cookies, or trying an incognito/InPrivate browser. If it still fails, I’ll collect the ticket details automatically.",
   ].join("\n");
 };
 
@@ -277,7 +332,7 @@ const getSafeGuidance = (lowerText: string): string | undefined => {
       "",
       "For password, MFA, authenticator, or sign-in issues, I should collect details for IT instead of guessing.",
       "",
-      "Ok, let’s open a ticket for IT. Type **/ticket** to start, or tell me what system is affected.",
+      "Tell me what system or account is affected, and I’ll help collect the details for IT.",
     ].join("\n");
   }
 
@@ -409,7 +464,7 @@ const startTicketFromExistingIssue = async (
     ...getTeamsUserInfo(context.activity),
     troubleshootingTried:
       state.ticket?.troubleshootingTried ||
-      "Bot recommended a reboot as the first safe troubleshooting step. User reported the issue still exists.",
+      "Bot recommended basic troubleshooting. User reported the issue still exists.",
   };
 
   saveConversationState(conversationId, state);
@@ -425,6 +480,37 @@ const startTicketFromExistingIssue = async (
       "When did this issue start? Example: today, yesterday, this morning, after a reboot, or after a recent update.",
     ].join("\n")
   );
+};
+
+const buildTroubleshootingSteps = (
+  affectedSystem: string,
+  lowerText: string
+): string[] => {
+  const isBrowserIssue =
+    affectedSystem === "Browser / Website" ||
+    lowerText.includes("website") ||
+    lowerText.includes("browser") ||
+    lowerText.includes("chrome") ||
+    lowerText.includes("edge") ||
+    lowerText.includes("page") ||
+    lowerText.includes("site");
+
+  if (isBrowserIssue) {
+    return [
+      "1. Close and reopen the browser.",
+      "2. Try the site in an incognito/InPrivate browser window.",
+      "3. Clear cache and cookies for the affected site.",
+      "4. Try another browser if available.",
+      "5. If it still fails, reboot once and test again.",
+    ];
+  }
+
+  return [
+    "1. Close and reopen the affected app.",
+    "2. Save your work and reboot the computer once.",
+    "3. After signing back in, test the issue again.",
+    "4. If there is an error message, copy it or take a screenshot.",
+  ];
 };
 
 app.on("message", async (context) => {
@@ -444,7 +530,7 @@ app.on("message", async (context) => {
 
   if (!text) {
     await context.send(
-      "ReBath IT Helper is online. Type **/ticket** to start a new IT support ticket, or type **/help** for commands."
+      "ReBath IT Helper is online. Tell me what issue you are having, or type **/help** for commands."
     );
     return;
   }
@@ -453,7 +539,7 @@ app.on("message", async (context) => {
     clearConversationState(conversationId);
 
     await context.send(
-      "Ok, I cleared the current conversation. Type **/ticket** to start a new IT support ticket."
+      "Ok, I cleared the current conversation. Tell me the issue, or type **/ticket** to start a new IT support ticket."
     );
 
     return;
@@ -469,13 +555,13 @@ app.on("message", async (context) => {
     saveConversationState(conversationId, state);
 
     await context.send(
-      "Canceled the current ticket intake. Type **/ticket** to start a new one."
+      "Canceled the current ticket intake. Tell me the issue if you still need help."
     );
 
     return;
   }
 
-  if (lowerText === "/help" || lowerText === "help") {
+  if (lowerText === "/help") {
     await context.send(helpMessage());
     return;
   }
@@ -519,6 +605,11 @@ app.on("message", async (context) => {
     return;
   }
 
+  if (isGreeting(lowerText) || isGeneralHelpRequest(lowerText)) {
+    await context.send(generalHelpMessage());
+    return;
+  }
+
   if (isTicketStartRequest(lowerText)) {
     await startTicketFlow(context, conversationId, state);
     return;
@@ -545,7 +636,7 @@ app.on("message", async (context) => {
     }
 
     await context.send(
-      "Did the reboot fix the issue? Reply **fixed** if it is working now, or **still not working** if the issue continues."
+      "Did the troubleshooting fix the issue? Reply **fixed** if it is working now, or **still not working** if the issue continues."
     );
 
     return;
@@ -721,6 +812,7 @@ app.on("message", async (context) => {
   if (looksLikeIssue(lowerText)) {
     const teamsUser = getTeamsUserInfo(activity);
     const affectedSystem = detectAffectedSystem(lowerText);
+    const troubleshootingSteps = buildTroubleshootingSteps(affectedSystem, lowerText);
 
     state.mode = "awaitingTroubleshootingResult";
     state.ticketStep = undefined;
@@ -728,8 +820,9 @@ app.on("message", async (context) => {
       ...teamsUser,
       affectedSystem,
       issueSummary: text,
-      troubleshootingTried:
-        "Bot recommended a reboot as the first safe troubleshooting step.",
+      troubleshootingTried: `Bot recommended basic troubleshooting: ${troubleshootingSteps.join(
+        " "
+      )}`,
     };
 
     saveConversationState(conversationId, state);
@@ -740,9 +833,11 @@ app.on("message", async (context) => {
         "",
         `It sounds like an issue with **${affectedSystem}**.`,
         "",
-        "First, save your work and try rebooting once. A reboot can clear common Windows, Outlook, Teams, VPN, and printer issues.",
+        "Please try these safe first steps:",
         "",
-        "After rebooting, reply **fixed** if it is working, or **still not working** and I’ll open a ticket for IT.",
+        ...troubleshootingSteps,
+        "",
+        "After trying that, reply **fixed** if it is working, or **still not working** and I’ll open a ticket for IT.",
       ].join("\n")
     );
 
@@ -775,9 +870,9 @@ app.on("message", async (context) => {
       [
         "ReBath IT Helper is online.",
         "",
-        "I can help with basic IT questions or collect details for a support ticket.",
+        "Tell me what issue you are having, like **Outlook is frozen**, **VPN will not connect**, or **website is not loading**.",
         "",
-        "Tell me the issue, like **Outlook is frozen**, or type **/ticket** to start a support ticket.",
+        "I’ll suggest safe troubleshooting first. If it still does not work, I’ll help open a ticket for IT.",
       ].join("\n")
     );
 
