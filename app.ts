@@ -47,6 +47,9 @@ const app = new App({
 });
 
 interface TicketDetails {
+  requesterName?: string;
+  requesterTeamsId?: string;
+  requesterAadObjectId?: string;
   affectedSystem?: string;
   issueSummary?: string;
   startedAt?: string;
@@ -60,7 +63,7 @@ interface TicketDetails {
 
 interface ConversationState {
   count: number;
-  mode?: "idle" | "ticket";
+  mode?: "idle" | "ticket" | "awaitingTroubleshootingResult";
   ticketStep?: number;
   ticket?: TicketDetails;
   lastTicketNumber?: string;
@@ -92,6 +95,14 @@ const clearConversationState = (conversationId: string): void => {
   storage.delete(conversationId);
 };
 
+const getTeamsUserInfo = (activity: any) => {
+  return {
+    requesterName: activity.from?.name || "Unknown user",
+    requesterTeamsId: activity.from?.id || "Unknown Teams ID",
+    requesterAadObjectId: activity.from?.aadObjectId || "Unknown AAD object ID",
+  };
+};
+
 const isTicketStartRequest = (lowerText: string): boolean => {
   return [
     "/ticket",
@@ -120,6 +131,117 @@ const isConfirmRequest = (lowerText: string): boolean => {
   );
 };
 
+const stillNotWorking = (lowerText: string): boolean => {
+  return [
+    "still not working",
+    "still broken",
+    "still frozen",
+    "still slow",
+    "did not work",
+    "didn't work",
+    "didnt work",
+    "not fixed",
+    "same issue",
+    "still happening",
+    "issue still exists",
+    "yes still broken",
+    "no it did not work",
+    "no it didn't work",
+    "no",
+  ].includes(lowerText);
+};
+
+const issueResolved = (lowerText: string): boolean => {
+  return [
+    "fixed",
+    "it worked",
+    "working now",
+    "resolved",
+    "all good",
+    "yes it worked",
+    "yes",
+  ].includes(lowerText);
+};
+
+const detectAffectedSystem = (lowerText: string): string => {
+  if (lowerText.includes("outlook") || lowerText.includes("email")) {
+    return "Outlook";
+  }
+
+  if (lowerText.includes("teams")) {
+    return "Microsoft Teams";
+  }
+
+  if (lowerText.includes("vpn")) {
+    return "VPN";
+  }
+
+  if (lowerText.includes("printer") || lowerText.includes("print")) {
+    return "Printer";
+  }
+
+  if (
+    lowerText.includes("internet") ||
+    lowerText.includes("wifi") ||
+    lowerText.includes("wi-fi") ||
+    lowerText.includes("network")
+  ) {
+    return "Network";
+  }
+
+  if (lowerText.includes("onedrive")) {
+    return "OneDrive";
+  }
+
+  if (lowerText.includes("sharepoint")) {
+    return "SharePoint";
+  }
+
+  if (
+    lowerText.includes("computer") ||
+    lowerText.includes("laptop") ||
+    lowerText.includes("pc") ||
+    lowerText.includes("desktop")
+  ) {
+    return "Computer";
+  }
+
+  return "General IT";
+};
+
+const looksLikeIssue = (lowerText: string): boolean => {
+  const issueWords = [
+    "not working",
+    "broken",
+    "frozen",
+    "freezing",
+    "slow",
+    "crashing",
+    "crashed",
+    "will not open",
+    "won't open",
+    "wont open",
+    "cant open",
+    "can't open",
+    "cannot open",
+    "error",
+    "stuck",
+    "down",
+    "offline",
+    "cannot connect",
+    "can't connect",
+    "cant connect",
+    "wont connect",
+    "won't connect",
+    "not connecting",
+    "keeps closing",
+    "keeps freezing",
+    "keeps crashing",
+  ];
+
+  return issueWords.some((word) => lowerText.includes(word));
+};
+
 const rebootGuidance = (): string => {
   return [
     "**Safe reboot guidance:**",
@@ -132,7 +254,7 @@ const rebootGuidance = (): string => {
     "3. Restart from the Windows Start menu.",
     "4. Sign back in and test the issue again.",
     "",
-    "If the issue continues, type **/ticket** and I’ll collect the details for IT.",
+    "If the issue continues, reply **still not working** and I’ll help open a ticket for IT.",
   ].join("\n");
 };
 
@@ -145,78 +267,6 @@ const getSafeGuidance = (lowerText: string): string | undefined => {
     return rebootGuidance();
   }
 
-  if (lowerText.includes("outlook")) {
-    return [
-      "**Basic Outlook check:**",
-      "",
-      "1. Close Outlook completely.",
-      "2. Reopen Outlook.",
-      "3. If it still fails, save your work and reboot once.",
-      "4. If you see an error message, copy it or take a screenshot.",
-      "",
-      "If it still does not work, type **/ticket** and I’ll collect the details for IT.",
-    ].join("\n");
-  }
-
-  if (lowerText.includes("teams")) {
-    return [
-      "**Basic Teams check:**",
-      "",
-      "1. Quit Teams completely.",
-      "2. Reopen Teams.",
-      "3. Check your internet connection.",
-      "4. If audio/video is the issue, test another headset or speaker if available.",
-      "5. If the issue continues, reboot once.",
-      "",
-      "If it still does not work, type **/ticket** and I’ll collect the details for IT.",
-    ].join("\n");
-  }
-
-  if (lowerText.includes("vpn")) {
-    return [
-      "**Basic VPN check:**",
-      "",
-      "1. Confirm your internet connection is working.",
-      "2. Disconnect and reconnect VPN.",
-      "3. If VPN still fails, reboot once.",
-      "4. Copy any VPN error message if one appears.",
-      "",
-      "If it still does not work, type **/ticket** and I’ll collect the details for IT.",
-    ].join("\n");
-  }
-
-  if (lowerText.includes("printer") || lowerText.includes("print")) {
-    return [
-      "**Basic printer check:**",
-      "",
-      "1. Confirm the printer is powered on.",
-      "2. Confirm you selected the correct printer.",
-      "3. Try printing again.",
-      "4. If you are at a store, check if others are affected too.",
-      "5. If printing still fails, reboot once if it is your workstation.",
-      "",
-      "If it still does not work, type **/ticket** and I’ll collect the details for IT.",
-    ].join("\n");
-  }
-
-  if (
-    lowerText.includes("internet") ||
-    lowerText.includes("network") ||
-    lowerText.includes("wifi") ||
-    lowerText.includes("wi-fi")
-  ) {
-    return [
-      "**Basic network check:**",
-      "",
-      "1. Check if other websites or apps are working.",
-      "2. Confirm whether you are on Wi-Fi, Ethernet, or VPN.",
-      "3. If only one app is affected, restart that app.",
-      "4. If everything is affected, reboot once and check if others nearby are impacted.",
-      "",
-      "If the issue continues, type **/ticket** and I’ll collect the details for IT.",
-    ].join("\n");
-  }
-
   if (
     lowerText.includes("password") ||
     lowerText.includes("mfa") ||
@@ -227,7 +277,7 @@ const getSafeGuidance = (lowerText: string): string | undefined => {
       "",
       "For password, MFA, authenticator, or sign-in issues, I should collect details for IT instead of guessing.",
       "",
-      "Type **/ticket** and I’ll help create a support ticket.",
+      "Ok, let’s open a ticket for IT. Type **/ticket** to start, or tell me what system is affected.",
     ].join("\n");
   }
 
@@ -244,7 +294,7 @@ const getSafeGuidance = (lowerText: string): string | undefined => {
       "",
       "Do not click anything else, do not delete evidence, and do not forward suspicious content unless IT asks.",
       "",
-      "Type **/ticket** now and include what happened, when it happened, and any suspicious sender, link, file, or message.",
+      "Ok, let’s open a ticket for IT. Please type **/ticket** and include what happened, when it happened, and any suspicious sender, link, file, or message.",
     ].join("\n");
   }
 
@@ -266,7 +316,7 @@ const helpMessage = (): string => {
     "**/reset** - Clear the current conversation",
     "**/help** - Show this help message",
     "",
-    "For anything advanced, urgent, security-related, or business-impacting, I will collect details for IT instead of guessing.",
+    "You can also just tell me the issue, like **Outlook is frozen** or **my computer is slow**.",
   ].join("\n");
 };
 
@@ -288,6 +338,7 @@ const ticketStatusMessage = (state: ConversationState): string => {
     "**Current ticket progress**",
     "",
     `**Step:** ${state.ticketStep}`,
+    `**Requester:** ${ticket.requesterName || "Not provided yet"}`,
     `**Affected system:** ${ticket.affectedSystem || "Not provided yet"}`,
     `**Issue:** ${ticket.issueSummary || "Not provided yet"}`,
     `**Started:** ${ticket.startedAt || "Not provided yet"}`,
@@ -308,6 +359,9 @@ const buildTicketSummary = (state: ConversationState): string => {
   return [
     "**IT Support Ticket Summary**",
     "",
+    `**Requester:** ${ticket.requesterName || "Not provided"}`,
+    `**Teams user ID:** ${ticket.requesterTeamsId || "Not provided"}`,
+    `**AAD object ID:** ${ticket.requesterAadObjectId || "Not provided"}`,
     `**Affected system:** ${ticket.affectedSystem || "Not provided"}`,
     `**Issue:** ${ticket.issueSummary || "Not provided"}`,
     `**Started:** ${ticket.startedAt || "Not provided"}`,
@@ -317,8 +371,6 @@ const buildTicketSummary = (state: ConversationState): string => {
     `**Business impact:** ${ticket.businessImpact || "Not provided"}`,
     `**Others affected:** ${ticket.othersAffected || "Not provided"}`,
     `**Troubleshooting tried:** ${ticket.troubleshootingTried || "Not provided"}`,
-    "",
-    "**Safe recommendation:** If you have not already done so, save your work and reboot once if this is a workstation/app issue.",
     "",
     "This is ready to become a ServiceNow ticket.",
     "",
@@ -333,12 +385,45 @@ const startTicketFlow = async (
 ): Promise<void> => {
   state.mode = "ticket";
   state.ticketStep = 1;
-  state.ticket = {};
+  state.ticket = {
+    ...getTeamsUserInfo(context.activity),
+  };
 
   saveConversationState(conversationId, state);
 
   await context.send(
-    "Let's create an IT support ticket. What app, system, or service is affected? Example: Outlook, Teams, VPN, OneDrive, printer, internet."
+    "Ok, let’s open a ticket for IT. What app, system, or service is affected? Example: Outlook, Teams, VPN, OneDrive, printer, internet."
+  );
+};
+
+const startTicketFromExistingIssue = async (
+  context: any,
+  conversationId: string,
+  state: ConversationState
+): Promise<void> => {
+  state.mode = "ticket";
+  state.ticketStep = 3;
+
+  state.ticket = {
+    ...(state.ticket || {}),
+    ...getTeamsUserInfo(context.activity),
+    troubleshootingTried:
+      state.ticket?.troubleshootingTried ||
+      "Bot recommended a reboot as the first safe troubleshooting step. User reported the issue still exists.",
+  };
+
+  saveConversationState(conversationId, state);
+
+  await context.send(
+    [
+      "Ok, let’s open a ticket for IT.",
+      "",
+      `I already have this recorded for **${state.ticket.requesterName || "you"}**:`,
+      `**Affected system:** ${state.ticket.affectedSystem || "Not provided"}`,
+      `**Issue:** ${state.ticket.issueSummary || "Not provided"}`,
+      "",
+      "When did this issue start? Example: today, yesterday, this morning, after a reboot, or after a recent update.",
+    ].join("\n")
   );
 };
 
@@ -351,6 +436,9 @@ app.on("message", async (context) => {
   console.log("Received Teams message:", {
     conversationId,
     conversationType: activity.conversation.conversationType,
+    fromName: activity.from?.name,
+    fromId: activity.from?.id,
+    fromAadObjectId: activity.from?.aadObjectId,
     text,
   });
 
@@ -417,6 +505,9 @@ app.on("message", async (context) => {
       nodeversion: process.version,
       sdkversion: "2.0.0",
       conversationType: activity.conversation.conversationType,
+      fromName: activity.from?.name,
+      fromId: activity.from?.id,
+      fromAadObjectId: activity.from?.aadObjectId,
       hasBotId: Boolean(process.env.BOT_ID),
       hasClientId: Boolean(process.env.CLIENT_ID),
       hasClientSecret: Boolean(process.env.CLIENT_SECRET),
@@ -433,8 +524,39 @@ app.on("message", async (context) => {
     return;
   }
 
+  if (state.mode === "awaitingTroubleshootingResult") {
+    if (issueResolved(lowerText)) {
+      state.mode = "idle";
+      state.ticketStep = undefined;
+      state.ticket = undefined;
+
+      saveConversationState(conversationId, state);
+
+      await context.send(
+        "Great — glad that fixed it. If the issue comes back, message me again and I can help open a ticket for IT."
+      );
+
+      return;
+    }
+
+    if (stillNotWorking(lowerText)) {
+      await startTicketFromExistingIssue(context, conversationId, state);
+      return;
+    }
+
+    await context.send(
+      "Did the reboot fix the issue? Reply **fixed** if it is working now, or **still not working** if the issue continues."
+    );
+
+    return;
+  }
+
   if (state.mode === "ticket" && state.ticketStep === 1) {
-    state.ticket = state.ticket || {};
+    state.ticket = {
+      ...(state.ticket || {}),
+      ...getTeamsUserInfo(activity),
+    };
+
     state.ticket.affectedSystem = text;
     state.ticketStep = 2;
 
@@ -448,7 +570,11 @@ app.on("message", async (context) => {
   }
 
   if (state.mode === "ticket" && state.ticketStep === 2) {
-    state.ticket = state.ticket || {};
+    state.ticket = {
+      ...(state.ticket || {}),
+      ...getTeamsUserInfo(activity),
+    };
+
     state.ticket.issueSummary = text;
     state.ticketStep = 3;
 
@@ -592,6 +718,37 @@ app.on("message", async (context) => {
     return;
   }
 
+  if (looksLikeIssue(lowerText)) {
+    const teamsUser = getTeamsUserInfo(activity);
+    const affectedSystem = detectAffectedSystem(lowerText);
+
+    state.mode = "awaitingTroubleshootingResult";
+    state.ticketStep = undefined;
+    state.ticket = {
+      ...teamsUser,
+      affectedSystem,
+      issueSummary: text,
+      troubleshootingTried:
+        "Bot recommended a reboot as the first safe troubleshooting step.",
+    };
+
+    saveConversationState(conversationId, state);
+
+    await context.send(
+      [
+        `Thanks, ${teamsUser.requesterName}.`,
+        "",
+        `It sounds like an issue with **${affectedSystem}**.`,
+        "",
+        "First, save your work and try rebooting once. A reboot can clear common Windows, Outlook, Teams, VPN, and printer issues.",
+        "",
+        "After rebooting, reply **fixed** if it is working, or **still not working** and I’ll open a ticket for IT.",
+      ].join("\n")
+    );
+
+    return;
+  }
+
   try {
     const aiResponse = await analyzeSupportMessage(text);
 
@@ -600,8 +757,8 @@ app.on("message", async (context) => {
         aiResponse.reply,
         "",
         aiResponse.shouldCreateTicket
-          ? "I can create a support ticket for this. Type **/ticket** to start."
-          : "Type **/ticket** if you want IT to review this.",
+          ? "If the issue continues, reply with what is still happening and I can help open a ticket for IT."
+          : "If you want IT to review this, type **/ticket**.",
       ].join("\n")
     );
 
@@ -620,8 +777,7 @@ app.on("message", async (context) => {
         "",
         "I can help with basic IT questions or collect details for a support ticket.",
         "",
-        "Type **/ticket** to start a new IT support ticket.",
-        "Type **/help** to see available commands.",
+        "Tell me the issue, like **Outlook is frozen**, or type **/ticket** to start a support ticket.",
       ].join("\n")
     );
 
