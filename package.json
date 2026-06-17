@@ -1,9 +1,12 @@
-{
+ {
     "name": "rebathithelper",
     "version": "1.0.0",
-    "description": "Microsoft 365 Agents Toolkit echo bot sample",
+    "description": "Microsoft 365 reBath Assistant Agent",
     "author": "Microsoft",
     "license": "MIT",
+	"engines": {
+        "node": ">=20"
+    },
     "main": "./lib/index.js",
     "scripts": {
         "dev:teamsfx": "env-cmd --silent -f .localConfigs npm run dev",
